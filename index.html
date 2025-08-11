@@ -374,6 +374,11 @@
       <div class="search">
         <input id="tableSearch" type="text" placeholder="Filter tables..." />
       </div>
+      <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <button id="addTableBtn" class="chip">+ Table</button>
+        <button id="exportBtn" class="chip">Export</button>
+        <button id="importBtn" class="chip">Import</button>
+      </div>
       <div id="tableList" class="table-list"></div>
     </aside>
 
@@ -381,17 +386,37 @@
       <div class="toolbar">
         <button id="graphTab" class="chip active">Graph</button>
         <button id="jsonTab" class="chip">JSON</button>
+        <button id="functionsTab" class="chip">Functions</button>
       </div>
-      <div class="canvas-wrap" id="canvasWrap">
+             <div class="canvas-wrap" id="canvasWrap">
         <div class="grid"></div>
         <svg class="connections" id="connections" xmlns="http://www.w3.org/2000/svg"></svg>
         <div class="nodes" id="nodes"></div>
+        <div id="jsonView" style="display:none; padding:16px;">
+          <textarea id="jsonEditor" style="width:100%; height: calc(100vh - 160px); background: rgba(15,23,42,0.85); color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, &quot;Liberation Mono&quot;, &quot;Courier New&quot;, monospace; font-size:13px;"></textarea>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="applyJsonBtn" class="btn-primary">Apply</button>
+            <button id="formatJsonBtn" class="chip">Format</button>
+          </div>
+        </div>
+        <div id="functionsView" style="display:none; padding:16px;">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+            <button id="addStepBtn" class="btn-primary">+ Step</button>
+            <button id="runChainBtn" class="chip">Run</button>
+            <span id="runChainStatus" style="color:#94a3b8; font-size:12px;"></span>
+          </div>
+          <div id="stepsList" class="table-list"></div>
+          <h4 style="margin-top:12px;">Result</h4>
+          <pre id="chainResult" style="background: rgba(15,23,42,0.85); border:1px solid #334155; border-radius:8px; padding:12px; min-height:120px;"></pre>
+        </div>
       </div>
     </main>
 
-    <aside class="inspector" id="inspector">
+         <aside class="inspector" id="inspector">
       <h3>Selection</h3>
-      <pre id="selectionDetails">Nothing selected</pre>
+      <div id="inspectorContent">
+        <pre id="selectionDetails">Nothing selected</pre>
+      </div>
     </aside>
   </div>
 
@@ -423,9 +448,11 @@
     };
 
     const state = {
-      schema: demoSchema,
+      schema: JSON.parse(localStorage.getItem('schema') || JSON.stringify(demoSchema)),
       selectedTable: null,
-      filterText: ''
+      filterText: '',
+      activeTab: 'graph',
+      steps: JSON.parse(localStorage.getItem('steps') || '[]')
     };
 
     const tableListEl = document.getElementById('tableList');
@@ -433,8 +460,25 @@
     const nodesEl = document.getElementById('nodes');
     const connectionsEl = document.getElementById('connections');
     const inspectorEl = document.getElementById('selectionDetails');
+    const inspectorContentEl = document.getElementById('inspectorContent');
     const connectBtn = document.getElementById('connectBtn');
     const endpointInput = document.getElementById('endpointInput');
+    const graphTab = document.getElementById('graphTab');
+    const jsonTab = document.getElementById('jsonTab');
+    const functionsTab = document.getElementById('functionsTab');
+    const jsonView = document.getElementById('jsonView');
+    const jsonEditor = document.getElementById('jsonEditor');
+    const applyJsonBtn = document.getElementById('applyJsonBtn');
+    const formatJsonBtn = document.getElementById('formatJsonBtn');
+    const addTableBtn = document.getElementById('addTableBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const functionsView = document.getElementById('functionsView');
+    const stepsList = document.getElementById('stepsList');
+    const addStepBtn = document.getElementById('addStepBtn');
+    const runChainBtn = document.getElementById('runChainBtn');
+    const runChainStatus = document.getElementById('runChainStatus');
+    const chainResult = document.getElementById('chainResult');
 
     function getTables(schema) {
       return Object.keys(schema).sort();
@@ -478,7 +522,7 @@
         item.onclick = () => {
           state.selectedTable = t;
           renderAll();
-          showSelection({ type: 'table', name: t, details: state.schema[t] });
+          showTableEditor(t);
         };
         tableListEl.appendChild(item);
       });
@@ -619,24 +663,276 @@
     }
 
     function showSelection(payload) {
-      inspectorEl.textContent = JSON.stringify(payload, null, 2);
+      inspectorContentEl.innerHTML = `<pre id="selectionDetails">${JSON.stringify(payload, null, 2)}</pre>`;
+    }
+
+    function showTableEditor(tableName) {
+      const table = state.schema[tableName];
+      const fields = Object.entries(table.fields);
+      const fieldsRows = fields.map(([fname, ftype]) => `
+        <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+          <input data-edit="fname" data-original="${fname}" value="${fname}" style="flex:1; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
+          <input data-edit="ftype" data-original="${fname}" value="${ftype}" style="width:220px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
+          <button data-action="remove-field" data-field="${fname}" class="chip">Remove</button>
+        </div>
+      `).join('');
+      inspectorContentEl.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong>${tableName}</strong>
+          <div style="display:flex; gap:8px;">
+            <button id="renameTableBtn" class="chip">Rename</button>
+            <button id="deleteTableBtn" class="chip">Delete</button>
+          </div>
+        </div>
+        <div style="margin-bottom:8px;">
+          <button id="addFieldBtn" class="btn-primary">+ Field</button>
+        </div>
+        ${fieldsRows || '<div style="color:#94a3b8;">No fields yet</div>'}
+        <div style="margin-top:8px; display:flex; gap:8px;">
+          <button id="saveTableBtn" class="btn-primary">Save</button>
+          <button id="discardTableBtn" class="chip">Discard</button>
+        </div>
+      `;
+
+      inspectorContentEl.querySelectorAll('[data-action="remove-field"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const fname = btn.dataset.field;
+          delete state.schema[tableName].fields[fname];
+          localStorage.setItem('schema', JSON.stringify(state.schema));
+          renderAll();
+          showTableEditor(tableName);
+        });
+      });
+
+      const handleSave = () => {
+        const nameInputs = inspectorContentEl.querySelectorAll('input[data-edit="fname"]');
+        const typeInputs = inspectorContentEl.querySelectorAll('input[data-edit="ftype"]');
+        const next = {};
+        nameInputs.forEach((inp, idx) => {
+          const newName = inp.value.trim();
+          const orig = inp.dataset.original;
+          const newType = typeInputs[idx].value.trim();
+          if (!newName) return;
+          next[newName] = newType || 'string';
+        });
+        state.schema[tableName].fields = next;
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        renderAll();
+        showTableEditor(tableName);
+      };
+
+      inspectorContentEl.querySelector('#saveTableBtn').addEventListener('click', handleSave);
+      inspectorContentEl.querySelector('#discardTableBtn').addEventListener('click', () => showTableEditor(tableName));
+      inspectorContentEl.querySelector('#addFieldBtn').addEventListener('click', () => {
+        const unique = 'field_' + Math.random().toString(36).slice(2,6);
+        state.schema[tableName].fields[unique] = 'string';
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        renderAll();
+        showTableEditor(tableName);
+      });
+      inspectorContentEl.querySelector('#deleteTableBtn').addEventListener('click', () => {
+        delete state.schema[tableName];
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        state.selectedTable = null;
+        renderAll();
+        showSelection({ type: 'info', message: 'Table deleted' });
+      });
+      inspectorContentEl.querySelector('#renameTableBtn').addEventListener('click', () => {
+        const newName = prompt('New table name', tableName);
+        if (!newName || newName === tableName) return;
+        state.schema[newName] = state.schema[tableName];
+        delete state.schema[tableName];
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        state.selectedTable = newName;
+        renderAll();
+        showTableEditor(newName);
+      });
+    }
+
+    function setActiveTab(tab) {
+      state.activeTab = tab;
+      graphTab.classList.toggle('active', tab === 'graph');
+      jsonTab.classList.toggle('active', tab === 'json');
+      functionsTab.classList.toggle('active', tab === 'functions');
+
+      const showGraph = tab === 'graph';
+      nodesEl.style.display = showGraph ? 'block' : 'none';
+      connectionsEl.style.display = showGraph ? 'block' : 'none';
+      jsonView.style.display = tab === 'json' ? 'block' : 'none';
+      functionsView.style.display = tab === 'functions' ? 'block' : 'none';
+
+      if (tab === 'json') {
+        jsonEditor.value = JSON.stringify(state.schema, null, 2);
+      }
+      if (tab === 'graph') {
+        renderConnections();
+      }
     }
 
     function renderAll() {
       renderTableList();
       renderNodes();
       renderConnections();
+      renderSteps();
     }
 
-    tableSearchEl.addEventListener('input', (e) => {
+    function renderSteps() {
+      stepsList.innerHTML = '';
+      if (!state.steps.length) {
+        const empty = document.createElement('div');
+        empty.style.color = '#94a3b8';
+        empty.textContent = 'No steps. Click + Step to add one.';
+        stepsList.appendChild(empty);
+        return;
+      }
+      state.steps.forEach((step, idx) => {
+        const row = document.createElement('div');
+        row.className = 'table-item';
+        row.innerHTML = `
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <select data-k="type" style="background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;">
+              <option ${step.type==='ReadTable'?'selected':''}>ReadTable</option>
+              <option ${step.type==='Filter'?'selected':''}>Filter</option>
+              <option ${step.type==='SelectFields'?'selected':''}>SelectFields</option>
+              <option ${step.type==='Join'?'selected':''}>Join</option>
+            </select>
+            <input data-k="arg1" placeholder="arg1" value="${step.arg1||''}" style="min-width:160px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
+            <input data-k="arg2" placeholder="arg2" value="${step.arg2||''}" style="min-width:160px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button data-action="up" class="chip">↑</button>
+            <button data-action="down" class="chip">↓</button>
+            <button data-action="remove" class="chip">Remove</button>
+          </div>
+        `;
+        row.querySelectorAll('select, input').forEach(el => {
+          el.addEventListener('change', () => {
+            const key = el.dataset.k;
+            const value = el.tagName === 'SELECT' ? el.value : el.value;
+            state.steps[idx][key] = value;
+            localStorage.setItem('steps', JSON.stringify(state.steps));
+          });
+        });
+        row.querySelector('[data-action="remove"]').addEventListener('click', () => {
+          state.steps.splice(idx,1);
+          localStorage.setItem('steps', JSON.stringify(state.steps));
+          renderSteps();
+        });
+        row.querySelector('[data-action="up"]').addEventListener('click', () => {
+          if (idx === 0) return;
+          const tmp = state.steps[idx-1];
+          state.steps[idx-1] = state.steps[idx];
+          state.steps[idx] = tmp;
+          localStorage.setItem('steps', JSON.stringify(state.steps));
+          renderSteps();
+        });
+        row.querySelector('[data-action="down"]').addEventListener('click', () => {
+          if (idx === state.steps.length-1) return;
+          const tmp = state.steps[idx+1];
+          state.steps[idx+1] = state.steps[idx];
+          state.steps[idx] = tmp;
+          localStorage.setItem('steps', JSON.stringify(state.steps));
+          renderSteps();
+        });
+        stepsList.appendChild(row);
+      });
+    }
+
+    addStepBtn.addEventListener('click', () => {
+      state.steps.push({ type: 'ReadTable', arg1: '', arg2: '' });
+      localStorage.setItem('steps', JSON.stringify(state.steps));
+      renderSteps();
+    });
+
+    function runChain(inputData) {
+      let data = inputData;
+      for (const step of state.steps) {
+        if (step.type === 'ReadTable') {
+          const t = step.arg1;
+          if (!t || !state.schema[t]) throw new Error('ReadTable: missing or unknown table');
+          data = { rows: demoRows(t) };
+        } else if (step.type === 'Filter') {
+          const expr = step.arg1;
+          if (!expr) continue;
+          const fn = new Function('row', `with(row){ return (${expr}); }`);
+          data.rows = data.rows.filter(fn);
+        } else if (step.type === 'SelectFields') {
+          const list = (step.arg1||'').split(',').map(s => s.trim()).filter(Boolean);
+          if (!list.length) continue;
+          data.rows = data.rows.map(r => Object.fromEntries(list.map(k => [k, r[k]])));
+        } else if (step.type === 'Join') {
+          const target = step.arg1;
+          const on = step.arg2; // format: leftKey=rightKey
+          if (!target || !on) continue;
+          const [leftKey, rightKey] = on.split('=').map(s => s.trim());
+          const rightRows = demoRows(target);
+          const index = new Map(rightRows.map(rr => [rr[rightKey], rr]));
+          data.rows = data.rows.map(lr => ({ ...lr, [target]: index.get(lr[leftKey]) || null }));
+        }
+      }
+      return data.rows;
+    }
+
+    function demoRows(table) {
+      // generates minimal synthetic rows for preview
+      const fields = Object.keys(state.schema[table].fields);
+      return Array.from({ length: 5 }).map((_, i) => Object.fromEntries(fields.map(f => [f, sampleValue(f, i, table)])));
+    }
+
+    function sampleValue(field, i, table) {
+      const type = state.schema[table].fields[field];
+      const ref = isIdType(type);
+      if (ref) return `${ref}_id_${i}`;
+      if (/title|name/i.test(field)) return `${field}_${i}`;
+      if (/email/i.test(field)) return `user${i}@example.com`;
+      if (/created/i.test(field)) return new Date(Date.now() - i*86400000).toISOString();
+      if (/id$/i.test(field)) return `${table}_id_${i}`;
+      return typeof i === 'number' ? i : `${field}_${i}`;
+    }
+
+    runChainBtn.addEventListener('click', () => {
+      try {
+        runChainStatus.textContent = 'Running...';
+        const out = runChain({});
+        chainResult.textContent = JSON.stringify(out, null, 2);
+        runChainStatus.textContent = 'Done';
+      } catch (e) {
+        runChainStatus.textContent = 'Error';
+        chainResult.textContent = String(e.message || e);
+      }
+    });
+
+    chainResult.textContent = '';
+
       state.filterText = e.target.value;
       renderTableList();
+    });
+
+    graphTab.addEventListener('click', () => setActiveTab('graph'));
+    jsonTab.addEventListener('click', () => setActiveTab('json'));
+    functionsTab.addEventListener('click', () => setActiveTab('functions'));
+
+    formatJsonBtn.addEventListener('click', () => {
+      try { jsonEditor.value = JSON.stringify(JSON.parse(jsonEditor.value), null, 2); } catch {}
+    });
+
+    applyJsonBtn.addEventListener('click', () => {
+      try {
+        const next = JSON.parse(jsonEditor.value);
+        state.schema = next;
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        renderAll();
+        showSelection({ type: 'info', message: 'Schema applied' });
+      } catch (e) {
+        showSelection({ type: 'error', message: 'Invalid JSON' });
+      }
     });
 
     connectBtn.addEventListener('click', () => {
       const raw = endpointInput.value.trim();
       if (!raw) {
         state.schema = demoSchema;
+        localStorage.setItem('schema', JSON.stringify(state.schema));
         state.selectedTable = null;
         renderAll();
         showSelection({ type: 'info', message: 'Loaded demo schema' });
@@ -645,6 +941,7 @@
       try {
         const parsed = JSON.parse(raw);
         state.schema = parsed;
+        localStorage.setItem('schema', JSON.stringify(state.schema));
         state.selectedTable = null;
         renderAll();
         showSelection({ type: 'info', message: 'Loaded pasted JSON schema' });
@@ -653,10 +950,60 @@
       }
     });
 
+    addTableBtn.addEventListener('click', () => {
+      const base = 'table_' + Math.random().toString(36).slice(2,6);
+      let name = prompt('New table name', base) || base;
+      name = name.trim();
+      if (!name) return;
+      if (state.schema[name]) {
+        showSelection({ type: 'error', message: 'Table already exists' });
+        return;
+      }
+      state.schema[name] = { fields: {} };
+      localStorage.setItem('schema', JSON.stringify(state.schema));
+      state.selectedTable = name;
+      renderAll();
+      showTableEditor(name);
+    });
+
+    exportBtn.addEventListener('click', () => {
+      const data = JSON.stringify(state.schema, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'schema.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    importBtn.addEventListener('click', () => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'application/json';
+      inp.onchange = async () => {
+        const file = inp.files[0];
+        if (!file) return;
+        const text = await file.text();
+        try {
+          const parsed = JSON.parse(text);
+          state.schema = parsed;
+          localStorage.setItem('schema', JSON.stringify(state.schema));
+          renderAll();
+          setActiveTab('graph');
+          showSelection({ type: 'info', message: 'Schema imported' });
+        } catch (e) {
+          showSelection({ type: 'error', message: 'Invalid JSON file' });
+        }
+      };
+      inp.click();
+    });
+
     window.addEventListener('resize', () => {
       renderConnections();
     });
 
+    setActiveTab(state.activeTab);
     renderAll();
   </script>
 </body>
