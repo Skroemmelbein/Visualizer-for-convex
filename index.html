@@ -1059,6 +1059,19 @@
       });
     }
 
+    function b64EncodeUnicode(str) {
+      const bytes = new TextEncoder().encode(str);
+      let binary = '';
+      bytes.forEach(b => binary += String.fromCharCode(b));
+      return btoa(binary);
+    }
+
+    function b64DecodeUnicode(b64) {
+      const binary = atob(b64);
+      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    }
+
     function demoRows(table) {
       // generates minimal synthetic rows for preview
       const fields = Object.keys(state.schema[table].fields);
@@ -1254,7 +1267,7 @@
         functions: state.functions,
         layout: state.layout
       };
-      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      const encoded = b64EncodeUnicode(JSON.stringify(payload));
       const url = `${location.origin}${location.pathname}#data=${encoded}`;
       navigator.clipboard.writeText(url).then(() => {
         showSelection({ type: 'info', message: 'Share link copied to clipboard' });
@@ -1266,7 +1279,7 @@
       const m = /#data=([^&]+)/.exec(location.hash);
       if (!m) return;
       try {
-        const json = decodeURIComponent(escape(atob(m[1])));
+        const json = b64DecodeUnicode(m[1]);
         const payload = JSON.parse(json);
         if (payload.schema) state.schema = payload.schema;
         if (payload.functions) state.functions = payload.functions;
