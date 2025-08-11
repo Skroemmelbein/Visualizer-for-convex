@@ -387,6 +387,8 @@
         <button id="graphTab" class="chip active">Graph</button>
         <button id="jsonTab" class="chip">JSON</button>
         <button id="functionsTab" class="chip">Functions</button>
+        <button id="validateBtn" class="chip">Validate</button>
+        <button id="shareBtn" class="chip">Share</button>
       </div>
              <div class="canvas-wrap" id="canvasWrap">
         <div class="grid"></div>
@@ -400,12 +402,29 @@
           </div>
         </div>
         <div id="functionsView" style="display:none; padding:16px;">
-          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-            <button id="addStepBtn" class="btn-primary">+ Step</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+            <select id="functionsSelect" style="min-width:180px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"></select>
+            <input id="functionNameInput" placeholder="Function name" style="min-width:220px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
+            <button id="newFunctionBtn" class="chip">New</button>
+            <button id="saveFunctionBtn" class="btn-primary">Save</button>
+            <button id="deleteFunctionBtn" class="chip">Delete</button>
+            <button id="exportFunctionsBtn" class="chip">Export</button>
+            <button id="importFunctionsBtn" class="chip">Import</button>
             <button id="runChainBtn" class="chip">Run</button>
             <span id="runChainStatus" style="color:#94a3b8; font-size:12px;"></span>
           </div>
-          <div id="stepsList" class="table-list"></div>
+          <div style="display:flex; gap:16px; align-items:flex-start;">
+            <div style="flex: 2;">
+              <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                <button id="addStepBtn" class="btn-primary">+ Step</button>
+              </div>
+              <div id="stepsList" class="table-list"></div>
+            </div>
+            <div style="flex: 1; min-width:280px;">
+              <h4 style="margin-bottom:6px;">Params</h4>
+              <textarea id="paramsEditor" style="width:100%; height:160px; background: rgba(15,23,42,0.85); color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, &quot;Liberation Mono&quot;, &quot;Courier New&quot;, monospace; font-size:12px;">{}</textarea>
+            </div>
+          </div>
           <h4 style="margin-top:12px;">Result</h4>
           <pre id="chainResult" style="background: rgba(15,23,42,0.85); border:1px solid #334155; border-radius:8px; padding:12px; min-height:120px;"></pre>
         </div>
@@ -452,7 +471,10 @@
       selectedTable: null,
       filterText: '',
       activeTab: 'graph',
-      steps: JSON.parse(localStorage.getItem('steps') || '[]')
+      steps: JSON.parse(localStorage.getItem('steps') || '[]'),
+      functions: JSON.parse(localStorage.getItem('functions') || '{}'),
+      currentFunction: localStorage.getItem('currentFunction') || null,
+      layout: JSON.parse(localStorage.getItem('layout') || '{}')
     };
 
     const tableListEl = document.getElementById('tableList');
@@ -479,6 +501,16 @@
     const runChainBtn = document.getElementById('runChainBtn');
     const runChainStatus = document.getElementById('runChainStatus');
     const chainResult = document.getElementById('chainResult');
+    const functionsSelect = document.getElementById('functionsSelect');
+    const validateBtn = document.getElementById('validateBtn');
+    const shareBtn = document.getElementById('shareBtn');
+    const functionNameInput = document.getElementById('functionNameInput');
+    const newFunctionBtn = document.getElementById('newFunctionBtn');
+    const saveFunctionBtn = document.getElementById('saveFunctionBtn');
+    const deleteFunctionBtn = document.getElementById('deleteFunctionBtn');
+    const exportFunctionsBtn = document.getElementById('exportFunctionsBtn');
+    const importFunctionsBtn = document.getElementById('importFunctionsBtn');
+    const paramsEditor = document.getElementById('paramsEditor');
 
     function getTables(schema) {
       return Object.keys(schema).sort();
@@ -499,6 +531,11 @@
       const spacingX = 360;
       const spacingY = 260;
       tables.forEach((tableName, index) => {
+        const saved = state.layout[tableName];
+        if (saved) {
+          positions[tableName] = { x: saved.x, y: saved.y };
+          return;
+        }
         const col = index % cols;
         const row = Math.floor(index / cols);
         positions[tableName] = {
@@ -537,6 +574,7 @@
         node.className = 'node';
         node.style.left = positions[tableName].x + 'px';
         node.style.top = positions[tableName].y + 'px';
+        node.dataset.table = tableName;
 
         const header = document.createElement('div');
         header.className = 'node-header';
@@ -549,6 +587,8 @@
           </div>
           <span class="node-badge">${Object.keys(state.schema[tableName].fields).length} fields</span>
         `;
+
+        makeDraggable(node, tableName);
 
         const fields = document.createElement('div');
         fields.className = 'fields';
@@ -774,6 +814,17 @@
       renderNodes();
       renderConnections();
       renderSteps();
+      renderFunctionsSelect();
+    }
+
+    function renderFunctionsSelect() {
+      const names = Object.keys(state.functions).sort();
+      functionsSelect.innerHTML = '<option value="">Select function...</option>' + names.map(n => `<option ${state.currentFunction===n?'selected':''}>${n}</option>`).join('');
+      functionNameInput.value = state.currentFunction || '';
+      if (state.currentFunction && state.functions[state.currentFunction]) {
+        state.steps = state.functions[state.currentFunction].steps || [];
+        paramsEditor.value = JSON.stringify(state.functions[state.currentFunction].params || {}, null, 2);
+      }
     }
 
     function renderSteps() {
@@ -795,6 +846,8 @@
               <option ${step.type==='Filter'?'selected':''}>Filter</option>
               <option ${step.type==='SelectFields'?'selected':''}>SelectFields</option>
               <option ${step.type==='Join'?'selected':''}>Join</option>
+              <option ${step.type==='SortBy'?'selected':''}>SortBy</option>
+              <option ${step.type==='Limit'?'selected':''}>Limit</option>
             </select>
             <input data-k="arg1" placeholder="arg1" value="${step.arg1||''}" style="min-width:160px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
             <input data-k="arg2" placeholder="arg2" value="${step.arg2||''}" style="min-width:160px; background: rgba(30,41,59,.6); border:1px solid #334155; color:#e2e8f0; padding:6px 8px; border-radius:6px;"/>
@@ -841,36 +894,169 @@
     addStepBtn.addEventListener('click', () => {
       state.steps.push({ type: 'ReadTable', arg1: '', arg2: '' });
       localStorage.setItem('steps', JSON.stringify(state.steps));
+      if (state.currentFunction) persistCurrentFunction();
       renderSteps();
     });
 
-    function runChain(inputData) {
+    functionsSelect.addEventListener('change', () => {
+      const name = functionsSelect.value || null;
+      state.currentFunction = name;
+      localStorage.setItem('currentFunction', name || '');
+      if (name) {
+        const fn = state.functions[name] || { steps: [], params: {} };
+        state.steps = fn.steps || [];
+        paramsEditor.value = JSON.stringify(fn.params || {}, null, 2);
+        localStorage.setItem('steps', JSON.stringify(state.steps));
+      }
+      renderSteps();
+    });
+
+    function persistCurrentFunction() {
+      if (!state.currentFunction) return;
+      let params = {};
+      try { params = JSON.parse(paramsEditor.value || '{}'); } catch { params = {}; }
+      state.functions[state.currentFunction] = { steps: state.steps, params };
+      localStorage.setItem('functions', JSON.stringify(state.functions));
+    }
+
+    newFunctionBtn.addEventListener('click', () => {
+      const name = (functionNameInput.value || '').trim() || 'function_' + Math.random().toString(36).slice(2,6);
+      if (state.functions[name]) {
+        showSelection({ type: 'error', message: 'Function name exists' });
+        return;
+      }
+      state.functions[name] = { steps: [], params: {} };
+      state.currentFunction = name;
+      localStorage.setItem('functions', JSON.stringify(state.functions));
+      localStorage.setItem('currentFunction', name);
+      functionNameInput.value = name;
+      renderFunctionsSelect();
+      renderSteps();
+    });
+
+    saveFunctionBtn.addEventListener('click', () => {
+      const name = (functionNameInput.value || '').trim();
+      if (!name) { showSelection({ type: 'error', message: 'Function name required' }); return; }
+      if (state.currentFunction && name !== state.currentFunction && state.functions[name]) {
+        showSelection({ type: 'error', message: 'Target function name exists' });
+        return;
+      }
+      let params = {};
+      try { params = JSON.parse(paramsEditor.value || '{}'); } catch { showSelection({ type: 'error', message: 'Params must be valid JSON' }); return; }
+
+      // Rename if needed
+      if (state.currentFunction && name !== state.currentFunction) {
+        state.functions[name] = state.functions[state.currentFunction];
+        delete state.functions[state.currentFunction];
+        state.currentFunction = name;
+      }
+
+      state.functions[name] = { steps: state.steps, params };
+      localStorage.setItem('functions', JSON.stringify(state.functions));
+      localStorage.setItem('currentFunction', name);
+      renderFunctionsSelect();
+      showSelection({ type: 'info', message: 'Function saved' });
+    });
+
+    deleteFunctionBtn.addEventListener('click', () => {
+      if (!state.currentFunction) return;
+      const name = state.currentFunction;
+      delete state.functions[name];
+      localStorage.setItem('functions', JSON.stringify(state.functions));
+      state.currentFunction = null;
+      localStorage.removeItem('currentFunction');
+      state.steps = [];
+      localStorage.setItem('steps', JSON.stringify(state.steps));
+      paramsEditor.value = '{}';
+      renderFunctionsSelect();
+      renderSteps();
+    });
+
+    exportFunctionsBtn.addEventListener('click', () => {
+      const data = JSON.stringify(state.functions, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'functions.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    importFunctionsBtn.addEventListener('click', () => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'application/json';
+      inp.onchange = async () => {
+        const file = inp.files[0];
+        if (!file) return;
+        const text = await file.text();
+        try {
+          const parsed = JSON.parse(text);
+          state.functions = parsed;
+          localStorage.setItem('functions', JSON.stringify(state.functions));
+          renderFunctionsSelect();
+          showSelection({ type: 'info', message: 'Functions imported' });
+        } catch (e) {
+          showSelection({ type: 'error', message: 'Invalid JSON' });
+        }
+      };
+      inp.click();
+    });
+
+    function runChain(inputData, params = {}) {
       let data = inputData;
       for (const step of state.steps) {
         if (step.type === 'ReadTable') {
-          const t = step.arg1;
+          const t = interpolate(step.arg1, params);
           if (!t || !state.schema[t]) throw new Error('ReadTable: missing or unknown table');
           data = { rows: demoRows(t) };
         } else if (step.type === 'Filter') {
-          const expr = step.arg1;
+          const expr = interpolate(step.arg1, params);
           if (!expr) continue;
           const fn = new Function('row', `with(row){ return (${expr}); }`);
           data.rows = data.rows.filter(fn);
         } else if (step.type === 'SelectFields') {
-          const list = (step.arg1||'').split(',').map(s => s.trim()).filter(Boolean);
+          const list = (interpolate(step.arg1, params)||'').split(',').map(s => s.trim()).filter(Boolean);
           if (!list.length) continue;
           data.rows = data.rows.map(r => Object.fromEntries(list.map(k => [k, r[k]])));
         } else if (step.type === 'Join') {
-          const target = step.arg1;
-          const on = step.arg2; // format: leftKey=rightKey
+          const target = interpolate(step.arg1, params);
+          const on = interpolate(step.arg2, params); // format: leftKey=rightKey
           if (!target || !on) continue;
           const [leftKey, rightKey] = on.split('=').map(s => s.trim());
           const rightRows = demoRows(target);
           const index = new Map(rightRows.map(rr => [rr[rightKey], rr]));
           data.rows = data.rows.map(lr => ({ ...lr, [target]: index.get(lr[leftKey]) || null }));
+        } else if (step.type === 'SortBy') {
+          const dir = (interpolate(step.arg2, params) || 'asc').toLowerCase();
+          const key = interpolate(step.arg1, params);
+          if (!key) continue;
+          data.rows = [...data.rows].sort((a,b) => {
+            const av = a[key]; const bv = b[key];
+            if (av == null && bv == null) return 0;
+            if (av == null) return 1;
+            if (bv == null) return -1;
+            if (av < bv) return dir==='asc' ? -1 : 1;
+            if (av > bv) return dir==='asc' ? 1 : -1;
+            return 0;
+          });
+        } else if (step.type === 'Limit') {
+          const n = parseInt(interpolate(step.arg1, params) || '10', 10);
+          if (!isNaN(n)) data.rows = data.rows.slice(0, Math.max(0, n));
         }
       }
       return data.rows;
+    }
+
+    function interpolate(str, params) {
+      if (!str) return str;
+      return str.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, k) => {
+        const segs = k.split('.');
+        let cur = params;
+        for (const s of segs) cur = cur?.[s];
+        return cur ?? '';
+      });
     }
 
     function demoRows(table) {
@@ -893,7 +1079,9 @@
     runChainBtn.addEventListener('click', () => {
       try {
         runChainStatus.textContent = 'Running...';
-        const out = runChain({});
+        let params = {};
+        try { params = JSON.parse(paramsEditor.value || '{}'); } catch { params = {}; }
+        const out = runChain({}, params);
         chainResult.textContent = JSON.stringify(out, null, 2);
         runChainStatus.textContent = 'Done';
       } catch (e) {
@@ -999,9 +1187,95 @@
       inp.click();
     });
 
+    function makeDraggable(el, tableName) {
+      let startX = 0, startY = 0, originX = 0, originY = 0, dragging = false;
+      const onDown = (e) => {
+        if (!(e.target.closest('.node-header') || e.target.classList.contains('node-header'))) return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = el.getBoundingClientRect();
+        originX = rect.left + window.scrollX;
+        originY = rect.top + window.scrollY;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      };
+      const onMove = (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const x = originX + dx - nodesEl.getBoundingClientRect().left + nodesEl.scrollLeft;
+        const y = originY + dy - nodesEl.getBoundingClientRect().top + nodesEl.scrollTop;
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+        state.layout[tableName] = { x, y };
+        localStorage.setItem('layout', JSON.stringify(state.layout));
+        renderConnections();
+      };
+      const onUp = () => {
+        dragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      el.addEventListener('mousedown', onDown);
+    }
+
+    function validateSchema() {
+      const issues = [];
+      const tables = Object.keys(state.schema);
+      for (const t of tables) {
+        const fields = state.schema[t]?.fields || {};
+        for (const [name, type] of Object.entries(fields)) {
+          const ref = isIdType(type);
+          if (ref && !state.schema[ref]) {
+            issues.push(`Field ${t}.${name} references missing table '${ref}'`);
+          }
+        }
+      }
+      return issues;
+    }
+
+    validateBtn.addEventListener('click', () => {
+      const issues = validateSchema();
+      if (!issues.length) {
+        showSelection({ type: 'ok', message: 'Schema is valid' });
+      } else {
+        showSelection({ type: 'validation', errors: issues });
+      }
+    });
+
     window.addEventListener('resize', () => {
       renderConnections();
     });
+
+    shareBtn.addEventListener('click', () => {
+      const payload = {
+        schema: state.schema,
+        functions: state.functions,
+        layout: state.layout
+      };
+      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      const url = `${location.origin}${location.pathname}#data=${encoded}`;
+      navigator.clipboard.writeText(url).then(() => {
+        showSelection({ type: 'info', message: 'Share link copied to clipboard' });
+      });
+    });
+
+    // Load from URL if present
+    (function restoreFromHash(){
+      const m = /#data=([^&]+)/.exec(location.hash);
+      if (!m) return;
+      try {
+        const json = decodeURIComponent(escape(atob(m[1])));
+        const payload = JSON.parse(json);
+        if (payload.schema) state.schema = payload.schema;
+        if (payload.functions) state.functions = payload.functions;
+        if (payload.layout) state.layout = payload.layout;
+        localStorage.setItem('schema', JSON.stringify(state.schema));
+        localStorage.setItem('functions', JSON.stringify(state.functions));
+        localStorage.setItem('layout', JSON.stringify(state.layout));
+      } catch {}
+    })();
 
     setActiveTab(state.activeTab);
     renderAll();
